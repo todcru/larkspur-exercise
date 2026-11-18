@@ -65,25 +65,24 @@ def run_agent(pnr: str, last_name: str, message: str) -> str:            # ✏�
         thinking={"type": "adaptive"}, tools=tools, messages=messages,
     )
 
-    answer = ""
+    
     turns = 1
     while response.stop_reason == "tool_use" and turns < MAX_TOOL_CALLS:
-        messages.append({"role": "assistant", "content": text_of(response)})
+        messages.append({"role": "assistant", "content": response.content})
         messages.append({"role": "user", "content": tool_results(response)})
-        answer = text_of(response)
         response = client.messages.create(
             model=MODEL, max_tokens=4096, system=runtime_preamble() + SYSTEM_PROMPT + TONE_ADDENDUM,
             thinking={"type": "adaptive"}, tools=tools, messages=messages,
         )
         turns += 1
 
-    return answer
+    return text_of(response)
 
 
 def tool_list() -> List[Dict[str, Any]]:                   # ✏️ Build 2, step 2.2
     """Given. Exactly what Claude is offered on every turn; run.py --show-tools
     prints this list."""
-    return build_tools() + EXTRA_TOOLS
+    return build_tools() + EXTRA_TOOLS + mcp_client.tools()
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -119,17 +118,21 @@ def build_tools() -> List[Dict[str, Any]]:                 # ✏️ Build 1, ste
                 "type": "object",
                 "properties": {
                     "flight_no": {"type": "string"},
-                    "date": {"type": "string", "description": "MM/DD/YYYY"},
+                    "date": {"type": "string", "description": "Local departure date in YYYY-MM-DD format, e.g. 2025-05-08"},
                 },
                 "required": ["flight_no", "date"],
             },
         },
         {
             "name": "search_alternatives",
-            "description": "search",
+            "description": "Find rebooking options for the disrupted segment on this booking. Use it "
+        "after get_flight_status shows a delay or cancellation that needs rebooking, "
+        "and before hold_seat. Returns alternative flights, each with an option_id "
+        "to pass to hold_seat and check_policy (chosen_option_id). Read-only: it "
+        "does not hold or change anything.",
             "input_schema": {
                 "type": "object",
-                "properties": {"pnr": {"type": "string"}},
+                "properties": {"pnr": {"type": "string","description": "Confirmation code from lookup_booking, e.g. K7PQ2M"}},
                 "required": ["pnr"],
             },
         },
@@ -215,10 +218,19 @@ def build_tools() -> List[Dict[str, Any]]:                 # ✏️ Build 1, ste
         },
         {
             "name": "send_confirmation",
-            "description": "Send the customer a written confirmation of what was just done. Benign.",
+            "description": "Send the customer a written confirmation of an action that has already "
+        "completed, such as confirm_rebooking succeeding or a voucher that was "
+        "approved. Do not use it for a seat hold, a pending voucher, or an "
+        "escalation, and never before the action has finished. The customer "
+        "receives it immediately and it cannot be unsent.",
             "input_schema": {
                 "type": "object",
-                "properties": {"pnr": {"type": "string"}, "message": {"type": "string"}},
+                "properties": {"pnr": {"type": "string",
+                                        "description": "Confirmation code from lookup_booking"},
+                                "message": {"type": "string",
+                                           "description": "Plain-language summary of exactly what was done, "
+                                       "using the ids and amounts from the tool results"},
+                },
                 "required": ["pnr", "message"],
             },
         },
