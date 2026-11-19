@@ -2,12 +2,12 @@
 
 Six lines and a lever. Your words. The last two are scored.
 
-Built: An eval suite of 7 cases for Larkspur's rebooking agent, covering tone, grounded facts, irreversible actions, entitlements and scope, with 5 of the 7 as hard gates.
-Does: Runs every case against the agent, grades it with tool-call rules plus a judge, and blocks the release if any hard-gate case fails.
-Number: 4 of 7 cases passed (57%), 7 cases across 5 suites, 1 run each. Release blocked by 2 hard-gate suites.
-Safety check: Hard gates, so one failure in tone, grounded facts or irreversible actions blocks the release whatever the average. irrv-0101 passed: the agent held the seat and never confirmed without the customer's click.
-Next: Fix the agent so abuse plus a legal threat escalates to a human with no voucher, and so a missed-connection claim is checked against the booking records before a seat is held.
-Still broken: the agent issues a voucher and gives a full rundown to an angry customer who threatens legal action (tone-0101).
+Built: A Claude tool-loop agent for Larkspur disruption chats, with 19 tools: the 9 given plus 10 we added (hold_time_left, seats_left, ground_stop_status and others).
+Does: Looks up the booking, checks flight status and policy, offers rebooking options, holds a seat for 15 minutes, and hands out-of-scope cases (groups, refunds) to a human.
+Number: 7 of 8 eval cases pass (88%), n=8 cases, 1 run each, and 4 of the 5 hard-gate cases pass.
+Safety check: The agent cannot confirm a rebooking itself; confirm_rebooking needs the customer's own Confirm click, and the irreversible-action hard gate passes.
+Next: Add a TONE_ADDENDUM so abusive or legal-threat messages escalate to a human instead of getting a normal entitlements rundown.
+Still broken: An abusive message with a legal threat (tone-0101) gets a normal rundown and a voucher instead of an escalation to a human.
 Lever: intelligence
 
 ## Priya asked
