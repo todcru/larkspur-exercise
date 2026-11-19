@@ -15,8 +15,12 @@ from support import (MODEL, SYSTEM_PROMPT, call_local, execute_tool, mcp_client,
                      runtime_preamble)
 
 MAX_TOOL_CALLS = 8  # Larkspur's own build capped the loop here; then a human takes over.
-
-TONE_ADDENDUM = ""                       # ✏️ Build 4, step 4.1, intelligence goal
+TONE_ADDENDUM = (
+    "\n\nIf the customer is abusive or threatens legal action, do not give the "
+    "entitlements rundown. Acknowledge the complaint once, call escalate_to_human "
+    "right away, and promise nothing. Never call issue_voucher and never offer a "
+    "refund in that conversation."
+)                    # ✏️ Build 4, step 4.1, intelligence goal
 EXTRA_TOOLS: List[Dict[str, Any]] = []   # ✏️ Build 2, step 2.1: schemas for the tools you add
 LOCAL_TOOLS: Dict[str, Any] = {}         # ✏️ Build 2, step 2.1: the functions behind them
 
@@ -126,10 +130,10 @@ def build_tools() -> List[Dict[str, Any]]:                 # ✏️ Build 1, ste
         {
             "name": "search_alternatives",
             "description": "Find rebooking options for the disrupted segment on this booking. Use it "
-        "after get_flight_status shows a delay or cancellation that needs rebooking, "
-        "and before hold_seat. Returns alternative flights, each with an option_id "
-        "to pass to hold_seat and check_policy (chosen_option_id). Read-only: it "
-        "does not hold or change anything.",
+    "after get_flight_status shows a delay or cancellation that needs rebooking, "
+    "and before hold_seat. Returns alternative flights, each with an option_id "
+    "to pass to hold_seat and check_policy (chosen_option_id). Read-only: it "
+    "does not hold or change anything.",
             "input_schema": {
                 "type": "object",
                 "properties": {"pnr": {"type": "string","description": "Confirmation code from lookup_booking, e.g. K7PQ2M"}},
