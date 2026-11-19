@@ -269,8 +269,18 @@ def run_agent(pnr: str, last_name: str, message: str) -> str:            # ‚úèÔ∏
         {"role": "user", "content": f"PNR {pnr}, last name {last_name}. {message}"},
     ]
 
+    # Cost goal: cache the start of every request. The tools and the stable
+    # instructions are identical on every turn, so they go first and are marked
+    # for the cache. The current time changes every second, so it goes AFTER the
+    # cached block: at the front it made every request look new and nothing was read back.
+    system = [
+        {"type": "text", "text": SYSTEM_PROMPT + TONE_ADDENDUM,
+         "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": runtime_preamble().strip()},
+    ]
+
     response = client.messages.create(
-        model=MODEL, max_tokens=4096, system=runtime_preamble() + SYSTEM_PROMPT + TONE_ADDENDUM,
+        model=MODEL, max_tokens=4096, system=system,
         thinking={"type": "adaptive"}, tools=tools, messages=messages,
     )
 
@@ -281,7 +291,7 @@ def run_agent(pnr: str, last_name: str, message: str) -> str:            # ‚úèÔ∏
         messages.append({"role": "user", "content": tool_results(response)})
         answer = text_of(response)
         response = client.messages.create(
-            model=MODEL, max_tokens=4096, system=runtime_preamble() + SYSTEM_PROMPT + TONE_ADDENDUM,
+            model=MODEL, max_tokens=4096, system=system,
             thinking={"type": "adaptive"}, tools=tools, messages=messages,
         )
         turns += 1
