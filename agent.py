@@ -17,8 +17,80 @@ from support import (MODEL, SYSTEM_PROMPT, call_local, execute_tool, mcp_client,
 MAX_TOOL_CALLS = 8  # Larkspur's own build capped the loop here; then a human takes over.
 
 TONE_ADDENDUM = ""                       # ✏️ Build 4, step 4.1, intelligence goal
-EXTRA_TOOLS: List[Dict[str, Any]] = []   # ✏️ Build 2, step 2.1: schemas for the tools you add
-LOCAL_TOOLS: Dict[str, Any] = {}         # ✏️ Build 2, step 2.1: the functions behind them
+
+# In Part 2, under “Write the code that finds the answer”, it says: “Your tool also needs a function... Ask Claude Code to help you write the function and connect it to your tool’s name, in LOCAL_TOOLS.”
+#  The “Try your tool” step also says Part 2 is done when Claude chooses your tool.
+import csv
+from pathlib import Path
+
+
+def _find_flights_csv():
+    here = Path(__file__).resolve().parent
+    for p in (here / "flights.csv", here / "data" / "flights.csv"):
+        if p.exists():
+            return p
+    return next(here.rglob("flights.csv"), None)
+
+
+def seats_left(flight_no=None, date=None, cabin=None, **kwargs) -> Dict[str, Any]:
+    """Free seats on one flight and date, read from flights.csv. Never guesses."""
+    if isinstance(flight_no, dict):  # in case call_local passes one dict
+        args = flight_no
+        flight_no, date, cabin = args.get("flight_no"), args.get("date"), args.get("cabin")
+    if not flight_no or not date:
+        return {"error": "flight_no and date (YYYY-MM-DD) are both required"}
+
+    path = _find_flights_csv()
+    if path is None:
+        return {"error": "flights.csv not found"}
+
+    wanted = str(flight_no).strip().upper()
+    with open(path, newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            fno = (row.get("flight_no") or row.get("flight") or "").strip().upper()
+            fdate = (row.get("date") or row.get("dep_date") or row.get("local_date") or "").strip()
+            if fno == wanted and fdate == str(date).strip():
+                seats = {"Y": row.get("seats_left_Y"), "J": row.get("seats_left_J")}
+                if cabin in ("Y", "J"):
+                    seats = {cabin: seats[cabin]}
+                return {"flight_no": wanted, "date": fdate, "seats_left": seats}
+    return {"error": f"no flight {wanted} on {date} in flights.csv"}
+
+ # ✏️ Build 2, step 2.1: schemas for the tools you add
+EXTRA_TOOLS: List[Dict[str, Any]] = [ {
+            "name": "seats_left",
+            "description": (
+                "Check how many free seats remain on one specific flight, per cabin, "
+                "from flights.csv (seats_left_Y for Main, seats_left_J for First). "
+                "Use it when the customer asks whether there is room on a flight, for "
+                "example 'is there space for the three of us?', and you already know the "
+                "flight number and date. Compare the count with the party size yourself. "
+                "Do not use it to find flights; call search_alternatives for that. "
+                "Returns the seat count for each cabin, or for just the one you ask for. "
+                "It only reads availability and does not hold or book anything; use "
+                "hold_seat for that."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "flight_no": {
+                        "type": "string",
+                        "description": "Flight number, e.g. LK417.",
+                    },
+                    "date": {
+                        "type": "string",
+                        "description": "Local departure date as YYYY-MM-DD, e.g. 2025-05-08.",
+                    },
+                    "cabin": {
+                        "type": "string",
+                        "enum": ["Y", "J"],
+                        "description": "Optional. Y = Main, J = First. Omit to get both cabins.",
+                    },
+                },
+                "required": ["flight_no", "date"],
+            },
+        },]  
+LOCAL_TOOLS: Dict[str, Any] = {"seats_left": seats_left}         # ✏️ Build 2, step 2.1: the functions behind them
 
 
 def text_of(response) -> str:
@@ -83,7 +155,7 @@ def run_agent(pnr: str, last_name: str, message: str) -> str:            # ✏�
 def tool_list() -> List[Dict[str, Any]]:                   # ✏️ Build 2, step 2.2
     """Given. Exactly what Claude is offered on every turn; run.py --show-tools
     prints this list."""
-    return build_tools() + EXTRA_TOOLS
+    return build_tools() + EXTRA_TOOLS  + mcp_client.tools()
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -224,5 +296,6 @@ def build_tools() -> List[Dict[str, Any]]:                 # ✏️ Build 1, ste
                 "properties": {"pnr": {"type": "string"}, "message": {"type": "string"}},
                 "required": ["pnr", "message"],
             },
-        },
+        }
+        
     ]
