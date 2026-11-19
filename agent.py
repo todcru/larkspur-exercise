@@ -13,12 +13,51 @@ from typing import Any, Dict, List
 from support import (MODEL, SYSTEM_PROMPT, call_local, execute_tool, mcp_client,
                      new_session, next_available_day, record_tool_result,
                      runtime_preamble)
+from support import mock_backend
 
 MAX_TOOL_CALLS = 8  # Larkspur's own build capped the loop here; then a human takes over.
 
 TONE_ADDENDUM = ""                       # ✏️ Build 4, step 4.1, intelligence goal
-EXTRA_TOOLS: List[Dict[str, Any]] = []   # ✏️ Build 2, step 2.1: schemas for the tools you add
+EXTRA_TOOLS: List[Dict[str, Any]] = [   # ✏️ Build 2, step 2.1: schemas for the tools you add
+    {
+        "name": "hold_time_left",
+        "description": (
+            "Tell the customer how long they have before a held seat is released. Call "
+            "it when the customer asks how much time they have, or before they decide "
+            "on a held option and you want to be sure the hold is still live. It reads "
+            "the hold made by hold_seat, measured against the same current time the "
+            "rest of the system uses. Returns minutes and seconds remaining, or "
+            "expired: true when the hold has run out, in which case offer to hold the "
+            "seat again. It only reads; it does not extend or create a hold."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "hold_id": {
+                    "type": "string",
+                    "description": "The hold_id returned by hold_seat, e.g. HOLD-3FA9C1. Never guess it.",
+                },
+            },
+            "required": ["hold_id"],
+        },
+    },
+]
 LOCAL_TOOLS: Dict[str, Any] = {}         # ✏️ Build 2, step 2.1: the functions behind them
+
+
+def hold_time_left(hold_id: str) -> Dict[str, Any]:
+    """Seconds left on a hold, against the backend's own clock."""
+    hold = mock_backend._holds.get(hold_id)
+    if hold is None:
+        return {"error": f"No hold {hold_id}. It was never made, or it has been confirmed."}
+    remaining = int((hold["expires_at"] - mock_backend.FIXTURE_CLOCK).total_seconds())
+    if remaining <= 0:
+        return {"hold_id": hold_id, "expired": True, "seconds_left": 0}
+    return {"hold_id": hold_id, "expired": False, "seconds_left": remaining,
+            "minutes_left": remaining // 60, "seconds_part": remaining % 60}
+
+
+LOCAL_TOOLS["hold_time_left"] = hold_time_left
 
 
 def text_of(response) -> str:
@@ -68,7 +107,7 @@ def run_agent(pnr: str, last_name: str, message: str) -> str:            # ✏�
     answer = ""
     turns = 1
     while response.stop_reason == "tool_use" and turns < MAX_TOOL_CALLS:
-        messages.append({"role": "assistant", "content": text_of(response)})
+        messages.append({"role": "assistant", "content": response.content})
         messages.append({"role": "user", "content": tool_results(response)})
         answer = text_of(response)
         response = client.messages.create(
@@ -77,7 +116,7 @@ def run_agent(pnr: str, last_name: str, message: str) -> str:            # ✏�
         )
         turns += 1
 
-    return answer
+    return text_of(response)
 
 
 def tool_list() -> List[Dict[str, Any]]:                   # ✏️ Build 2, step 2.2
@@ -118,18 +157,26 @@ def build_tools() -> List[Dict[str, Any]]:                 # ✏️ Build 1, ste
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "flight_no": {"type": "string"},
-                    "date": {"type": "string", "description": "MM/DD/YYYY"},
+                    "flight_no": {"type": "string", "description": "Flight number as on the booking segment, e.g. LK415."},
+                    "date": {"type": "string", "description": "Local departure date of the flight, formatted YYYY-MM-DD (e.g. 2025-05-08). Take it from the booking's disrupted segment, not from today's date."},
                 },
                 "required": ["flight_no", "date"],
             },
         },
         {
             "name": "search_alternatives",
-            "description": "search",
+            "description": (
+                "Find rebooking options for the disrupted segment on this booking: other "
+                "Larkspur flights on the same route with enough open seats for everyone on "
+                "the PNR, excluding the disrupted flight itself. Call it once the booking "
+                "is looked up and the flight is confirmed cancelled, diverted or badly "
+                "delayed, before offering the customer any alternative. Each option has an "
+                "option_id; that is the value hold_seat and check_policy need. Also returns "
+                "an excluded list with reasons, so do not offer flights that appear there."
+            ),
             "input_schema": {
                 "type": "object",
-                "properties": {"pnr": {"type": "string"}},
+                "properties": {"pnr": {"type": "string", "description": "Confirmation code of the booking, as given to lookup_booking."}},
                 "required": ["pnr"],
             },
         },
@@ -215,10 +262,20 @@ def build_tools() -> List[Dict[str, Any]]:                 # ✏️ Build 1, ste
         },
         {
             "name": "send_confirmation",
-            "description": "Send the customer a written confirmation of what was just done. Benign.",
+            "description": (
+                "Send the customer a written record of something that has already happened "
+                "in this conversation, such as a finalized rebooking or an issued voucher. "
+                "Call it after that action's tool has returned success, never before and "
+                "never for a hold, a pending voucher or an escalation. The message must "
+                "state only what the tool results confirmed: flight, times, amounts and "
+                "ids, with no promises. The customer receives it, so write it to them."
+            ),
             "input_schema": {
                 "type": "object",
-                "properties": {"pnr": {"type": "string"}, "message": {"type": "string"}},
+                "properties": {
+                    "pnr": {"type": "string", "description": "Confirmation code of the booking the action was taken on."},
+                    "message": {"type": "string", "description": "The text sent to the customer, written to them and limited to facts the tool results returned."},
+                },
                 "required": ["pnr", "message"],
             },
         },
